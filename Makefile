@@ -1,10 +1,18 @@
 CC=gcc
 CFLAGS=-I/usr/include/dhcpctl
-LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd
+LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd
 
-dcd: dcd.o
-	gcc -o dcd dcd.c $(LDFLAGS)
+SRCS =  dcd.c \
+	api.c \
+	http.c
+
+OBJS = $(SRCS:.c=.o)
+
+.PHONY: clean
+
+dcd: $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 
 clean:
 	rm -f dcd
-	rm -f dcd.o
+	rm -f *.o

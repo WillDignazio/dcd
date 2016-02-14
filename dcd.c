@@ -1,12 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <limits.h>
-#include <errno.h>
-#include <string.h>
-
 #include <argp.h>
-#include <dhcpctl/dhcpctl.h>
-#include <isc-dhcp/result.h>
 
 #include "dcd.h"
 
@@ -22,7 +14,9 @@ static struct argp_option options[] = {
   {"omapi-addr",	'a',	"ADDRESS", 0,	"OMAPI connection address" },
   {"omapi-key-name",	'k',	"KEYNAME", 0,	"OMAPI connection secret key name" },
   {"omapi-algo",	'e',	"ALGO", 0,	"OMAPI connection secret algo" },
-  {"omapi-secret",	's',	"SECRET", 0,	"OMAPI connection secret"} ,
+  {"omapi-secret",	's',	"SECRET", 0,	"OMAPI connection secret" } ,
+  {"http-port",		't',	"PORT",	0,	"HTTP connection port" },
+  {"foreground",	'f',	0,	0,	"Foreground the daemon" },
   { 0 }
 };
 
@@ -33,6 +27,8 @@ struct arguments
   char *omapi_secret_keyname;
   char *omapi_secret_algo;
   int omapi_port;
+  int http_port;
+  int foreground;
   int verbose;
 };
 
@@ -63,6 +59,12 @@ parse_opt (int key, char *arg, struct argp_state *state)
     case 'e':
       arguments->omapi_secret_algo = arg;
       break;
+    case 't':
+      arguments->http_port = strtonum(arg, 1, 65535, "Invalid port number, must be [0,65535]");
+      break;
+    case 'f':
+      arguments->foreground = 1;
+      break;
 
     default:
       return ARGP_ERR_UNKNOWN;
@@ -72,68 +74,10 @@ parse_opt (int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, doc };
 
-struct dcd_ctx*
-dcd_init(char *address, int port,
-	 char *secret_keyname,
-	 char *secret_algo,
-	 char *secret) {
-
-  struct dcd_ctx *ctx;
-  dhcpctl_status result;
-
-  /*
-   * OMAPI doesn't properly handle uninitiailized handles/ctx's.
-   * If we don't zero-out the various handles, it throws "invalid argument"
-   */
-  ctx = (struct dcd_ctx*)calloc(1, sizeof(struct dcd_ctx));
-  if (ctx == NULL) {
-    fprintf(stderr, "Failed to allocate dcd_ctx: %s\n", strerror(errno));
-    goto fail;
-  }
-
-  dhcpctl_initialize();
-  
-  if (secret_keyname || secret) {
-    if ((secret_keyname == NULL && secret != NULL) ||
-	(secret_keyname != NULL && secret == NULL)) {
-      fprintf(stderr, "Invalid argument: missing secret_keyname, secret_algo, or secret\n");
-      goto fail;
-    }
-    
-    result = dhcpctl_new_authenticator(&ctx->ctl_auth,
-				       secret_keyname,
-				       secret_algo, secret,
-				       strlen(secret) + 1);
-    if (result != ISC_R_SUCCESS) {
-      fprintf(stderr, "Failed to create authenticator object: %s\n",
-	      isc_result_totext(result));
-      goto fail;
-    }
-
-  } else {
-    ctx->ctl_auth = NULL;
-  }
-
-  result = dhcpctl_connect(&ctx->ctl_handle, address, port, ctx->ctl_auth);
-  if (result != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to connect to dhcp omapi: %s\n",
-	    isc_result_totext(result));
-    goto fail;
-  }
-  
-  ctx->omapi_address = address;
-  ctx->omapi_port = port;
-
-  return ctx;
-
- fail:
-  if (ctx != NULL) {
-    free(ctx);
-  }
-}
-
 int main(int argc, char *argv[]) {
   struct arguments arguments;
+  pid_t pid = -1;
+  pid_t sid = -1;
   
   arguments.verbose = 0;
   arguments.omapi_port = OMAPI_DEFAULT_PORT;
@@ -141,13 +85,44 @@ int main(int argc, char *argv[]) {
   arguments.omapi_secret_keyname = NULL;
   arguments.omapi_secret_algo = OMAPI_DEFAULT_SECRET_ALGO;
   arguments.omapi_address = OMAPI_DEFAULT_ADDR;
+  arguments.http_port = HTTP_DEFAULT_PORT;
+  arguments.foreground = 1;
 
   argp_parse (&argp, argc, argv, 0, 0, &arguments);
 
+  if (!arguments.foreground) {
+    /* Spawn daemoized process */
+    pid = fork();
+    if (pid < 0) {
+      fprintf(stderr, "Fork to process daemon failed: %s\n", strerror(errno));
+      exit(1);
+    }
+    
+    /* Finish up */
+    if (pid > 0) {
+      exit(0);
+    }
+    
+    umask(0);
+    sid = setsid();
+    if (sid < 0) {
+      fprintf(stderr, "Failed to set sid: %s\n", strerror(errno));
+      exit(1);
+    }
+    
+    chdir("/tmp");
+  }
+    
   dcd_init(arguments.omapi_address, arguments.omapi_port,
 	   arguments.omapi_secret_keyname,
 	   arguments.omapi_secret_algo,
-	   arguments.omapi_secret);
-  
+	   arguments.omapi_secret,
+	   arguments.http_port);
+
+  /* Go off into REM sleep...... */
+  while (1) {
+    sleep(1);
+  }
+
   return 0;
 }
