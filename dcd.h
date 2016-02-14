@@ -5,6 +5,7 @@
 
 #define OMAPI_DEFAULT_PORT 7911
 #define OMAPI_DEFAULT_ADDR "127.0.0.1"
+#define OMAPI_DEFAULT_SECRET_ALGO "hmac-md5"
 
 struct dcd_ctx {
   dhcpctl_handle ctl_handle;
