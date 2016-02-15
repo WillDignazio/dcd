@@ -1,0 +1,10 @@
+package api;
+
+message DHCPValueResponse {
+	optional string name = 1;
+	optional string value = 2;
+}
+
+message DHCPGetValue {
+	optional string name = 1;
+}

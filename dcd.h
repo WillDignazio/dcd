@@ -9,17 +9,20 @@
 
 #include <dhcpctl/dhcpctl.h>
 
+#define OMAPI_MAX_SECRET_LEN 200
 #define OMAPI_DEFAULT_PORT 7911
 #define OMAPI_DEFAULT_ADDR "127.0.0.1"
 #define OMAPI_DEFAULT_SECRET_ALGO "hmac-md5"
 
+#define HTTP_PROCESS_BUFFER_SIZE 65536
 #define HTTP_DEFAULT_PORT 8080
+
 
 struct dcd_ctx {
   dhcpctl_handle ctl_handle;
   dhcpctl_handle ctl_auth;
   struct MHD_Daemon *mhd_daemon;
-  char *omapi_address;
+  const char *omapi_address;
   int omapi_port;
 };
 
@@ -31,10 +34,10 @@ struct dcd_ctx {
  * If an error occurs, the return pointer shall be NULL, otherwise the
  * returned pointer will contain a valid initialized dcd_ctx struct.
  */
-struct dcd_ctx* dcd_init(char *address, int port,
-			 char *secret_keyname,
-			 char *secret_algo,
-			 char *secret,
+struct dcd_ctx* dcd_init(const char *address, int port,
+			 const char *secret_keyname,
+			 const char *secret_algo,
+			 const unsigned char *secret,
 			 int http_port);
 
 

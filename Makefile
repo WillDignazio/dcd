@@ -1,6 +1,6 @@
-CC=gcc
-CFLAGS=-I/usr/include/dhcpctl
-LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd
+CC=clang
+CFLAGS=-ggdb -O0 -Wall -Wextra -Werror -I/usr/include/dhcpctl $(shell pkg-config --cflags glib)
+LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd -lprotobuf-c -lglib -luuid
 
 SRCS =  dcd.c \
 	api.c \
@@ -8,10 +8,13 @@ SRCS =  dcd.c \
 
 OBJS = $(SRCS:.c=.o)
 
-.PHONY: clean
+.PHONY: clean proto
 
-dcd: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+dcd: proto $(OBJS) 
+	$(CC) $(CFLAGS) -o $@ $(OBJS) api.pb-c.c $(LDFLAGS)
+
+proto:
+	protoc-c --c_out=. api.proto
 
 clean:
 	rm -f dcd

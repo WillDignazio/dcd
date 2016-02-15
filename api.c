@@ -11,10 +11,10 @@
 #include "dcd.h"
 
 struct dcd_ctx*
-dcd_init(char *address, int port,
-	 char *secret_keyname,
-	 char *secret_algo,
-	 char *secret,
+dcd_init(const char *address, int port,
+	 const char *secret_keyname,
+	 const char *secret_algo,
+	 const unsigned char *secret,
 	 int http_port) {
 
   struct MHD_Daemon *daemon;
@@ -43,7 +43,7 @@ dcd_init(char *address, int port,
     result = dhcpctl_new_authenticator(&ctx->ctl_auth,
 				       secret_keyname,
 				       secret_algo, secret,
-				       strlen(secret) + 1);
+				       strnlen((const char *)secret, OMAPI_MAX_SECRET_LEN) + 1);
     if (result != ISC_R_SUCCESS) {
       fprintf(stderr, "Failed to create authenticator object: %s\n",
 	      isc_result_totext(result));
@@ -76,4 +76,6 @@ dcd_init(char *address, int port,
   if (ctx != NULL) {
     free(ctx);
   }
+
+  return NULL;
 }
