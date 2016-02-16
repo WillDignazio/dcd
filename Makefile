@@ -4,7 +4,8 @@ LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd -lprotobuf-c -lglib -luuid
 
 SRCS =  dcd.c \
 	api.c \
-	http.c
+	http.c \
+	routes.c
 
 OBJS = $(SRCS:.c=.o)
 

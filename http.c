@@ -1,81 +1,51 @@
 #include "dcd.h"
 
 #include <time.h>
-#include <uuid/uuid.h>
 #include <glib.h>
 #include <microhttpd.h>
 
-#define COOKIE_NAME "mhd_dcd_session"
-
 static const char *bad_request_page = "<html><p><b>400 Bad Request</b></p></html>";
-static GHashTable *sessions_table = NULL;
-
-struct Session {
-  struct Session *next;	// Next session (kept in linked list)
-  uuid_t uuid;		// Unique ID
-  time_t start;		// Time when this session was last active
-
-  char value_1[64];	// TEST: String submitted via form
-  char value_2[64];	// TEST: Another string submitted via form
-};
 
 struct Request {
-  struct Session *session;		// Associated Session
-  struct MHD_PostProcessor *post;	// Post processing of handling form data (eg. POST Request)
+  struct MHD_PostProcessor *post;	// POST processing of handling form data (eg. POST Request)
   const char *post_url;			// URL to serve in response to (possible) POST request
+  GHashTable *params;			// GET request parameters
 };
 
-/* static void */
-/* add_session_cookie(struct Session *session, */
-/* 		   struct MHD_Response *response) { */
-/*   char str[256]; */
-/*   char uuid_str[37]; */
+struct Route {
+  const char *url;
+  const char *mime;
+};
 
-/*   uuid_unparse(session->uuid, uuid_str); */
-/*   snprintf(str, sizeof(str), "%s=%s", COOKIE_NAME, uuid_str); */
+static GHashTable *route_table;
 
-/*   if (MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE, str) == MHD_NO) { */
-/*     fprintf(stderr, "Failed to set session cookie header!\n"); */
-/*   } */
-/* } */
+static int
+get_uri_iterator(void *cls,
+		 enum MHD_ValueKind kind,
+		 const char *key,
+		 const char *value) {
+  (void)cls;
+  (void)kind;
+  (void)key;
+  (void)value;
 
-struct Session*
-get_session(struct MHD_Connection *connection) {
-  gpointer cookie;
-  struct Session *session;
-  
-  cookie = (gpointer)MHD_lookup_connection_value(connection, MHD_COOKIE_KIND, "session");
-  if (cookie != NULL) {
-    /* We have an active session for this user, and need to service it */
-    gpointer *session_ptr;
-    
-    session_ptr = g_hash_table_lookup(sessions_table, cookie);
-    if (session_ptr == NULL) {
-      fprintf(stderr, "Unable to find session, even though we should have it.\n");
-      return MHD_NO;
-    }
-   
-    printf("Got session object: %s\n", (char*)cookie);
-    session = (struct Session*)session_ptr;
-  } else {
-    session = calloc(1, sizeof(struct Session));
-    if (session == NULL) {
-      fprintf(stderr, "Unable to allocate session object\n");
-      return MHD_NO;
-    }
+  struct Request *request;
 
-    uuid_generate(session->uuid);
-    session->start = time(NULL); 
-
-    /* TODO: Cleanup, a little roundabout */
-    char uuid_str[37];
-    uuid_unparse(session->uuid, uuid_str);
-    g_hash_table_insert(sessions_table, uuid_str, &session);
-
-    printf("Inserted session object: %s\n", (char*)uuid_str);
+  request = (struct Request*)cls;
+  if (request == NULL) {
+    fprintf(stderr, "Received get_uri_iterator without request object.\n");
+    return MHD_NO;
   }
 
-  return session;
+  if (request->params == NULL) {
+    fprintf(stderr, "Params store is not initialized for request object.\n");
+    return MHD_NO;
+  }
+
+  /* Insert this parameter into the request object param store */
+  g_hash_table_insert(request->params, (gpointer)key, (gpointer)value);
+
+  return MHD_YES;
 }
 
 static int
@@ -86,7 +56,7 @@ post_iterator(void *cls,
 	      const char *content_type,
 	      const char *transfer_encoding,
 	      const char *data, uint64_t off, size_t size) {
-
+  (void)cls;
   (void)kind;
   (void)key;
   (void)filename;
@@ -96,13 +66,52 @@ post_iterator(void *cls,
   (void)off;
   (void)size;
 
-  struct Request *request = cls;
-  struct Session *session = request->session;
+  printf("TODO: HANDLING POST....\n");
 
-  char uuid_str[37];
-  uuid_unparse(session->uuid, uuid_str);
-  fprintf(stdout, "ITERATOR for session: %s\n", uuid_str);
   return MHD_YES;
+}
+
+struct Request*
+alloc_request(void) {
+  struct Request *request;
+
+  request = (struct Request*)calloc(1, sizeof(*request));
+  if (request == NULL) {
+    fprintf(stderr, "Failed to allocate Request object.\n");
+    return NULL;
+  }
+
+  request->params = g_hash_table_new(&g_str_hash, &g_str_equal);
+
+  return request;
+}
+
+void
+print_keyval(gpointer key, gpointer value, gpointer user_data) {
+  (void)user_data;
+  printf("keyval: %s=%s\n", key, value);
+}
+
+void
+request_completed(void *cls, struct MHD_Connection *connection,
+		  void **con_cls,
+		  enum MHD_RequestTerminationCode toe)
+{
+  (void)cls;
+  (void)connection;
+  (void)toe;
+
+  struct Request *request;
+
+  request = *con_cls;
+  if (request == NULL) {
+    fprintf(stderr, "Failed to receive Request object on request_completed.\n");
+    return;
+  }
+
+  g_hash_table_foreach(request->params, &print_keyval, NULL);
+  free(request);
+  *con_cls = NULL;
 }
 
 int answer_to_connection (void *cls, struct MHD_Connection *connection,
@@ -114,33 +123,26 @@ int answer_to_connection (void *cls, struct MHD_Connection *connection,
   (void)cls;
   (void)url;
   (void)version;
-  (void)upload_data;
-  (void)upload_data_size;
-  (void)con_cls;
 
   struct Request *request;
-  struct Session *session;
   struct MHD_Response *response;
   int ret;
   
   request = NULL;
-  session = NULL;
   response = NULL;
   ret = -1;
 
-  request = (struct Request*)con_cls;
+  request = (struct Request*)*con_cls;
   if (request == NULL) {
-    printf("Created request object for connection\n");
 
-    request = (struct Request*)calloc(1, sizeof(struct Request));
+    request = alloc_request();
     if (request == NULL) {
       fprintf(stderr, "Failed to allocate request struct.\n");
       return MHD_NO;
     }
 
     *con_cls = request;
-    if (strcmp(method, MHD_HTTP_METHOD_POST)) {
-      printf("Servicing POST request.\n");
+    if (strcmp(method, MHD_HTTP_METHOD_POST) == 0) {
       request->post = MHD_create_post_processor(connection,
 						HTTP_PROCESS_BUFFER_SIZE,
 						&post_iterator, request);
@@ -153,22 +155,9 @@ int answer_to_connection (void *cls, struct MHD_Connection *connection,
     return MHD_YES;
   }
 
-  if (request->session == NULL) {
-    request->session = get_session(connection);
-    if (session == NULL) {
-      fprintf(stderr, "Failed to establish connection session.\n");
-      return MHD_NO;
-    }
-  }
-
-  session = request->session;
-  session->start = time(NULL);
-
   if (strcmp(method, MHD_HTTP_METHOD_POST) == 0) {
     /* Consume, handle POST data */
-    MHD_post_process(request->post,
-		     upload_data,
-		     *upload_data_size);
+    MHD_post_process(request->post, upload_data, *upload_data_size);
     if (*upload_data_size != 0) {
       *upload_data_size = 0;
       return MHD_YES;
@@ -178,26 +167,35 @@ int answer_to_connection (void *cls, struct MHD_Connection *connection,
     MHD_destroy_post_processor(request->post);
     request->post = NULL;
 
-    method = MHD_HTTP_METHOD_GET; // faked to carry on
-    if (request->post_url != NULL) {
-      url = request->post_url;
+    /* XXX TODO: SERVE PROPER POST RESPONSE */
+    response = MHD_create_response_from_buffer(strlen(bad_request_page),
+					       (void*)bad_request_page,
+					       MHD_RESPMEM_PERSISTENT);
+  } else if (strcmp(method, MHD_HTTP_METHOD_GET) == 0) {
+    /* Get the URL key=val arguments */
+    MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, get_uri_iterator, request);
+
+    RouteHandler handler;
+
+    handler = g_hash_table_lookup(route_table, url);
+    if (handler == NULL) {
+      response = MHD_create_response_from_buffer(strlen(bad_request_page),
+						 (void*)bad_request_page,
+						 MHD_RESPMEM_PERSISTENT);
+      goto respond;
     }
+
+    response = handler(request);
   }
 
-  response = MHD_create_response_from_buffer(strlen(bad_request_page),
-					     (void*)bad_request_page,
-					     MHD_RESPMEM_PERSISTENT);
-
+ respond:
   if (response == NULL) {
     return MHD_NO;
   }
   
-  ret = MHD_queue_response(connection,
-			   MHD_HTTP_OK,
-			   response);
+  ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 
   MHD_destroy_response(response);
-
   return ret;
 }
 
@@ -205,19 +203,23 @@ struct MHD_Daemon*
 http_init(int port) {
   struct MHD_Daemon *daemon = NULL;
 
-  sessions_table = g_hash_table_new(&g_str_hash,
-				    &g_str_equal);
-  if (sessions_table == NULL) {
-    fprintf(stderr, "Failed to initialize http sessions table\n");
-    goto fail;
-  }
-  
   daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, port, NULL, NULL,
-			    &answer_to_connection, NULL, MHD_OPTION_END);
+			    &answer_to_connection, NULL,
+			    MHD_OPTION_NOTIFY_COMPLETED, &request_completed, NULL,
+			    MHD_OPTION_END);
   if (daemon == NULL) {
     fprintf(stderr, "Failed to allocate MHD daemon\n");
     goto fail;
   }
+
+  route_table = g_hash_table_new(&g_str_hash, &g_str_equal);
+  if (route_table == NULL) {
+    fprintf(stderr, "Failed to initialize route table.");
+    goto fail;
+  }
+
+  /* Configure routes */
+  g_hash_table_insert(route_table, "/lease", &route_lease);
 
   return daemon;
 
@@ -226,8 +228,8 @@ http_init(int port) {
     MHD_stop_daemon(daemon);
   }
 
-  if (sessions_table != NULL) {
-    g_hash_table_destroy(sessions_table);
+  if (route_table != NULL) {
+    g_hash_table_destroy(route_table);
   }
 
   return NULL;

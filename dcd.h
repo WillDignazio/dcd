@@ -17,7 +17,6 @@
 #define HTTP_PROCESS_BUFFER_SIZE 65536
 #define HTTP_DEFAULT_PORT 8080
 
-
 struct dcd_ctx {
   dhcpctl_handle ctl_handle;
   dhcpctl_handle ctl_auth;
@@ -41,6 +40,13 @@ struct dcd_ctx* dcd_init(const char *address, int port,
 			 int http_port);
 
 
+/* http.c */
+struct Request;
 struct MHD_Daemon* http_init(int port);
+
+
+/* routes.c */
+typedef struct MHD_Response* (*RouteHandler)(struct Request *request);
+struct MHD_Response* route_lease(struct Request *request);
 
 #endif
