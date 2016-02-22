@@ -11,7 +11,7 @@ OBJS = $(SRCS:.c=.o)
 
 .PHONY: clean proto
 
-dcd: proto $(OBJS) 
+dcd: proto $(OBJS) dcd.h
 	$(CC) $(CFLAGS) -o $@ $(OBJS) api.pb-c.c $(LDFLAGS)
 
 proto:

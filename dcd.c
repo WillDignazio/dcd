@@ -10,6 +10,9 @@ const char *argp_program_bug_address = "<slackwill@csh.rit.edu>";
 static char doc[] = "dcd -- Dhcp Control Daemon -- network controlled daemon for DHCP";
 static char args_doc[] = "<TODO>";
 
+/* extern'd in dcd.h */
+struct dcd_ctx *global_ctx;
+
 static struct argp_option options[] = {
   {"verbose",  		'v',	NULL,      0,	"Produce verbose output",	0 },
   {"omapi-port",	'p',	"PORT",	   0,	"OMAPI connection port",	0 },
@@ -79,7 +82,6 @@ parse_opt (int key, char *arg, struct argp_state *state)
 static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL };
 
 int main(int argc, char *argv[]) {
-  struct dcd_ctx *ctx;
   struct arguments arguments;
   pid_t pid = -1;
   pid_t sid = -1;
@@ -118,13 +120,13 @@ int main(int argc, char *argv[]) {
     chdir("/tmp");
   }
     
-  ctx = dcd_init(arguments.omapi_address, arguments.omapi_port,
-		 arguments.omapi_secret_keyname,
-		 arguments.omapi_secret_algo,
-		 arguments.omapi_secret,
-		 arguments.http_port);
+  global_ctx = dcd_init(arguments.omapi_address, arguments.omapi_port,
+			arguments.omapi_secret_keyname,
+			arguments.omapi_secret_algo,
+			arguments.omapi_secret,
+			arguments.http_port);
 
-  if (ctx == NULL) {
+  if (global_ctx == NULL) {
     fprintf(stderr, "Failed to initialize dcd context, shutting down...\n");
     exit(1);
   }

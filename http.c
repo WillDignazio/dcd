@@ -4,14 +4,6 @@
 #include <glib.h>
 #include <microhttpd.h>
 
-static const char *bad_request_page = "<html><p><b>400 Bad Request</b></p></html>";
-
-struct Request {
-  struct MHD_PostProcessor *post;	// POST processing of handling form data (eg. POST Request)
-  const char *post_url;			// URL to serve in response to (possible) POST request
-  GHashTable *params;			// GET request parameters
-};
-
 struct Route {
   const char *url;
   const char *mime;
@@ -87,6 +79,20 @@ alloc_request(void) {
 }
 
 void
+free_request(struct Request* request) {
+  if (request == NULL) {
+    fprintf(stderr, "Attempted to free NULL request object.\n");
+    return;
+  }
+
+  if (request->params != NULL) {
+    g_hash_table_destroy(request->params);
+  }
+
+  free(request);
+}
+
+void
 print_keyval(gpointer key, gpointer value, gpointer user_data) {
   (void)user_data;
   printf("keyval: %s=%s\n", key, value);
@@ -110,7 +116,8 @@ request_completed(void *cls, struct MHD_Connection *connection,
   }
 
   g_hash_table_foreach(request->params, &print_keyval, NULL);
-  free(request);
+  
+  free_request(request);
   *con_cls = NULL;
 }
 
@@ -179,9 +186,7 @@ int answer_to_connection (void *cls, struct MHD_Connection *connection,
 
     handler = g_hash_table_lookup(route_table, url);
     if (handler == NULL) {
-      response = MHD_create_response_from_buffer(strlen(bad_request_page),
-						 (void*)bad_request_page,
-						 MHD_RESPMEM_PERSISTENT);
+      response = NULL;
       goto respond;
     }
 
