@@ -35,11 +35,14 @@ struct dcd_ctx {
 };
 
 /* api.c */
-#define DHCP_PARAM_IPADDRESS "ip-address"
-#define DHCP_PARAM_LEASE "lease"
-#define DHCP_PARAM_ENDS "ends"
-#define DHCP_PARAM_INTERFACE "interface"
-#define DHCP_PARAM_NAME "name"
+#define DHCP_PARAM_IPADDRESS	"ip-address"
+#define DHCP_PARAM_LEASE	"lease"
+#define DHCP_PARAM_ENDS		"ends"
+#define DHCP_PARAM_STARTS	"starts"
+#define DHCP_PARAM_INTERFACE	"interface"
+#define DHCP_PARAM_NAME		"name"
+#define DHCP_PARAM_TSTP		"tstp"
+#define DHCP_PARAM_CLTT		"cltt"
 
 /**
  * Initialize a new dcd context, this creates the necessary underlying

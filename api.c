@@ -102,6 +102,59 @@ open_object_sync(dhcpctl_handle handle, dhcpctl_handle connection)
   return status;
 }
 
+int
+json_add_omapi_param(json_t *json, dhcpctl_handle handle, const char *param,
+		     json_t* (conv)(dhcpctl_data_string str))
+{
+  dhcpctl_data_string value;
+  dhcpctl_status status;
+  json_t *intermediate;
+  int ret;
+
+  value = NULL;
+  intermediate = NULL;
+  status = -1;
+  ret = -1;
+
+  status = dhcpctl_get_value(&value, handle, param);
+  if (status != ISC_R_SUCCESS) {
+    fprintf(stderr, "Failed to get \"%s\" value: %s\n",
+	    param, isc_result_totext(status));
+    goto done;
+  }
+
+  intermediate = conv(value);
+  if (intermediate == NULL)
+    goto done;
+
+  /* Check that we put the keyval in, then drop needless reference */
+  ret = json_object_set(json, param, intermediate);
+  if (ret != 0) {
+    fprintf(stderr, "Failed to set json \"%s\" value.\n", param);
+    goto done;
+  }  
+
+ done:
+  if (value != NULL)
+    dhcpctl_data_string_dereference(&value, MDL);
+  if (intermediate != NULL)
+    json_decref(intermediate);
+
+  return ret;
+}
+
+json_t*
+timestring_to_json(dhcpctl_data_string string)
+{
+  time_t thetime;
+  
+  /* Setup time as time_t, which comes in as network endian */
+  memcpy(&thetime, string->value, string->len);
+  thetime = htonl(thetime);
+
+  return json_string(ctime(&thetime));
+}
+
 json_t*
 dcd_get_lease(const char *address, struct dcd_ctx *ctx)
 {
@@ -110,20 +163,24 @@ dcd_get_lease(const char *address, struct dcd_ctx *ctx)
   dhcpctl_status status;
   dhcpctl_status waitstatus;
   dhcpctl_data_string ipaddrstr;
+  dhcpctl_data_string val_lease_starts;
   dhcpctl_data_string val_lease_ends;
+  time_t thetime;
   struct in_addr convaddr;
-  char *result;
+  json_t *json;
   int ret;
   int type;
 
-  ret = -1;
-  type = -1;
+  val_lease_starts = NULL;
   val_lease_ends = NULL;
   lease = dhcpctl_null_handle;
-  result = NULL;
   ipaddrstr = NULL;
   status = -1;
   waitstatus = -1;
+  json = NULL;
+  ret = -1;
+  type = -1;
+  thetime = 0;
 
   sem_wait(&ctx->sem_lock);
 
@@ -152,7 +209,7 @@ dcd_get_lease(const char *address, struct dcd_ctx *ctx)
     goto done;
   }
 
-  status = omapi_data_string_new (&ipaddrstr, 4, MDL);
+  status = omapi_data_string_new(&ipaddrstr, 4, MDL);
   if (status != ISC_R_SUCCESS) {
     fprintf(stderr, "Failed to allocate ipaddrstr for lease: %s\n",
 	    isc_result_totext(status));
@@ -180,24 +237,41 @@ dcd_get_lease(const char *address, struct dcd_ctx *ctx)
     goto done;
   }
 
-  time_t thetime = 0;
-  memcpy(&thetime, val_lease_ends->value, val_lease_ends->len);
+  /*
+   * Begin configuration of JSON return object.
+   */
+  json = json_object();
+  if (json == NULL) {
+    fprintf(stderr, "Failed to allocate json return object.\n");
+    goto done;
+  }
 
-  thetime = htonl(thetime);
-  fprintf(stdout, "Ending Time: %s\n", ctime(&thetime));
+  /* For these particular fields, we just want them if available */
+  json_add_omapi_param(json, lease, DHCP_PARAM_ENDS, timestring_to_json);
+  json_add_omapi_param(json, lease, DHCP_PARAM_STARTS, timestring_to_json);
+  json_add_omapi_param(json, lease, DHCP_PARAM_TSTP, timestring_to_json);
+  json_add_omapi_param(json, lease, DHCP_PARAM_CLTT, timestring_to_json);
   
+  json_t *json_addr = json_string(address);
+  if (json_addr != NULL) {
+    json_object_set(json, DHCP_PARAM_IPADDRESS, json_addr);
+    json_decref(json_addr);
+  }
+
  done:
   if (ipaddrstr != NULL)
     dhcpctl_data_string_dereference(&ipaddrstr, MDL);
   if (val_lease_ends != NULL)
     dhcpctl_data_string_dereference(&val_lease_ends, MDL);
+  if (val_lease_starts != NULL)
+    dhcpctl_data_string_dereference(&val_lease_starts, MDL);
   if (connection != NULL)
     omapi_object_dereference(&connection, MDL);
   if (lease != NULL)
     omapi_object_dereference(&lease, MDL);
 
   sem_post(&ctx->sem_lock);
-  return NULL;
+  return json;
 }
 
 int
