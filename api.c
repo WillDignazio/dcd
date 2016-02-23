@@ -10,6 +10,31 @@
 
 #include "dcd.h"
 
+dhcpctl_handle
+build_connection(struct dcd_ctx *ctx)
+{
+  dhcpctl_handle connection;
+  dhcpctl_status status;
+
+  connection = NULL;
+  status = -1;
+
+  status = dhcpctl_connect(&connection, ctx->omapi_address, ctx->omapi_port, ctx->ctl_auth);
+  if (status != ISC_R_SUCCESS) {
+    fprintf(stderr, "Failed to connect to dhcp omapi: %s\n",
+	    isc_result_totext(status));
+    goto fail;
+  }
+
+  return connection;
+
+ fail:
+  if (connection != NULL) {
+    omapi_object_dereference(&connection, MDL);
+  }
+  return NULL;
+}
+
 int
 determine_family(const char *address)
 {
@@ -44,14 +69,48 @@ determine_family(const char *address)
   return type;
 }
 
-dhcpctl_data_string
+dhcpctl_status
+open_object_sync(dhcpctl_handle handle, dhcpctl_handle connection)
+{
+  dhcpctl_status status;
+  dhcpctl_status waitstatus;
+
+  status = -1;
+  waitstatus = -1;
+
+  status = dhcpctl_open_object(handle, connection, 0);
+  if (status != ISC_R_SUCCESS) {
+    fprintf(stderr, "Failed to open object: %s\n",
+	    isc_result_totext(status));
+    goto done;
+  }
+
+  status = dhcpctl_wait_for_completion(handle, &waitstatus);
+  if (status != ISC_R_SUCCESS) {
+    fprintf(stderr, "Failed to initialize wait: %s\n",
+	    isc_result_totext(status));
+    goto done;
+  }
+  if (waitstatus != ISC_R_SUCCESS) {
+    fprintf(stderr, "Failed to wait for completion of handle wait: %s\n",
+	    isc_result_totext(waitstatus));
+    status = waitstatus;
+    goto done;
+  }
+
+ done:
+  return status;
+}
+
+json_t*
 dcd_get_lease(const char *address, struct dcd_ctx *ctx)
 {
   dhcpctl_handle lease;
+  dhcpctl_handle connection;
   dhcpctl_status status;
   dhcpctl_status waitstatus;
   dhcpctl_data_string ipaddrstr;
-  dhcpctl_data_string value;
+  dhcpctl_data_string val_lease_ends;
   struct in_addr convaddr;
   char *result;
   int ret;
@@ -59,17 +118,22 @@ dcd_get_lease(const char *address, struct dcd_ctx *ctx)
 
   ret = -1;
   type = -1;
-  value = NULL;
+  val_lease_ends = NULL;
   lease = dhcpctl_null_handle;
   result = NULL;
   ipaddrstr = NULL;
   status = -1;
   waitstatus = -1;
 
-  pthread_mutex_lock(&ctx->lock);
+  sem_wait(&ctx->sem_lock);
+
+  connection = build_connection(ctx);
+  if (connection == NULL) {
+    goto done;
+  }
 
   memset(&lease, 0, sizeof(lease));
-  status = dhcpctl_new_object(&lease, ctx->ctl_handle, DHCP_PARAM_LEASE);
+  status = dhcpctl_new_object(&lease, connection, DHCP_PARAM_LEASE);
   if (status != ISC_R_SUCCESS) {
     fprintf(stderr, "Failed to retrieve lease object.\n");
     goto done;
@@ -99,51 +163,41 @@ dcd_get_lease(const char *address, struct dcd_ctx *ctx)
 
   status = dhcpctl_set_value(lease, ipaddrstr, DHCP_PARAM_IPADDRESS);
   if (status != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to get DHCP_PARAM_IPADDRESS from lease object: %s\n",
+    fprintf(stderr, "Failed to set DHCP_PARAM_IPADDRESS from lease object: %s\n",
 	    isc_result_totext(status));
     goto done;
   }
 
-  status = dhcpctl_open_object(lease, ctx->ctl_handle, 0);
+  status = open_object_sync(lease, connection);
   if (status != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to open object: %s\n",
-	    isc_result_totext(status));
     goto done;
   }
 
-  status = dhcpctl_wait_for_completion(lease, &waitstatus);
-  if (status != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to initialize wait: %s\n",
-	    isc_result_totext(status));
-    goto done;
-  }
-  if (waitstatus != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to wait for completion of lease call: %s\n",
-	    isc_result_totext(waitstatus));
-    goto done;
-  }
-
-  status = dhcpctl_get_value(&value, lease, DHCP_PARAM_ENDS);
+  status = dhcpctl_get_value(&val_lease_ends, lease, DHCP_PARAM_ENDS);
   if (status != ISC_R_SUCCESS) {
     fprintf(stderr, "Failed to get DHCP_PARAM_ENDS value: %s\n",
 	    isc_result_totext(status));
     goto done;
   }
 
-  time_t thetime;
-  memcpy(&thetime, value->value, value->len);
+  time_t thetime = 0;
+  memcpy(&thetime, val_lease_ends->value, val_lease_ends->len);
 
+  thetime = htonl(thetime);
   fprintf(stdout, "Ending Time: %s\n", ctime(&thetime));
   
  done:
-
   if (ipaddrstr != NULL)
     dhcpctl_data_string_dereference(&ipaddrstr, MDL);
-  if (value != NULL)
-    dhcpctl_data_string_dereference(&value, MDL);
+  if (val_lease_ends != NULL)
+    dhcpctl_data_string_dereference(&val_lease_ends, MDL);
+  if (connection != NULL)
+    omapi_object_dereference(&connection, MDL);
+  if (lease != NULL)
+    omapi_object_dereference(&lease, MDL);
 
-  pthread_mutex_unlock(&ctx->lock);
-  return value;
+  sem_post(&ctx->sem_lock);
+  return NULL;
 }
 
 int
@@ -151,6 +205,7 @@ check_connection(struct dcd_ctx *ctx)
 {
   dhcpctl_status status;
   dhcpctl_status waitstatus;
+  dhcpctl_handle connection;
   dhcpctl_handle interface_handle;
   struct ifaddrs *ifaddr, *ifa;
   dhcpctl_status ret;
@@ -162,7 +217,12 @@ check_connection(struct dcd_ctx *ctx)
   ifa = NULL;
   ret = -1;
 
-  status = dhcpctl_new_object(&interface_handle, ctx->ctl_handle, DHCP_PARAM_INTERFACE);
+  connection = build_connection(ctx);
+  if (connection == NULL) {
+    goto fail;
+  }
+  
+  status = dhcpctl_new_object(&interface_handle, connection, DHCP_PARAM_INTERFACE);
   if (status != ISC_R_SUCCESS) {
     fprintf(stderr, "Failed to allocate connection test interface: %s\n",
 	    isc_result_totext(status));
@@ -187,7 +247,7 @@ check_connection(struct dcd_ctx *ctx)
       ret = status;
       continue;
     }
-    status = dhcpctl_open_object(interface_handle, ctx->ctl_handle, 0);
+    status = dhcpctl_open_object(interface_handle, connection, 0);
     if (status != ISC_R_SUCCESS) {
       ret = status;
       continue;
@@ -210,9 +270,14 @@ check_connection(struct dcd_ctx *ctx)
   }
 
  fail:
-  if (ifaddr != NULL) {
+  if (ifaddr != NULL)
     freeifaddrs(ifaddr);
-  }
+
+  if (connection != NULL)
+    omapi_object_dereference(&connection, MDL);
+
+  if (interface_handle != NULL)
+    omapi_object_dereference(&interface_handle, MDL);
   
   return ret;
 }
@@ -269,12 +334,9 @@ dcd_init(const char *address, int port,
     ctx->ctl_auth = NULL;
   }
 
-  status = dhcpctl_connect(&ctx->ctl_handle, address, port, ctx->ctl_auth);
-  if (status != ISC_R_SUCCESS) {
-    fprintf(stderr, "Failed to connect to dhcp omapi: %s\n",
-	    isc_result_totext(status));
-    goto fail;
-  }
+  /* Required to establish a connection */
+  ctx->omapi_address = address;
+  ctx->omapi_port = port;
 
   status = check_connection(ctx);
   if (status != ISC_R_SUCCESS) {
@@ -286,11 +348,10 @@ dcd_init(const char *address, int port,
     goto fail;
   }
 
-  ctx->omapi_address = address;
-  ctx->omapi_port = port;
   ctx->mhd_daemon = daemon;
   
-  if (pthread_mutex_init(&ctx->lock, NULL) != 0) {
+  /* TODO: pass in max conn count */
+  if (sem_init(&ctx->sem_lock, 0, DCD_MAX_CONN) != 0) {
     goto fail;
   }
 
@@ -306,4 +367,14 @@ dcd_init(const char *address, int port,
   }
 
   return NULL;
+}
+
+void
+dcd_shutdown(struct dcd_ctx *ctx)
+{
+  sem_destroy(&ctx->sem_lock);
+  if (ctx->mhd_daemon != NULL)
+    MHD_stop_daemon(ctx->mhd_daemon);
+  if (ctx->ctl_auth != NULL)
+    omapi_object_dereference(&ctx->ctl_auth, MDL);
 }

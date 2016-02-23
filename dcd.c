@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <bsd/stdlib.h>
 #include <argp.h>
+#include <signal.h>
 
 #include "dcd.h"
 
@@ -81,7 +82,18 @@ parse_opt (int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL };
 
-int main(int argc, char *argv[]) {
+void
+handler_sigint(int v)
+{
+  (void)v;
+  printf("Received SIGINT, shutting down....\n");
+  dcd_shutdown(global_ctx);
+  exit(0);
+}
+
+
+int main(int argc, char *argv[])
+{
   struct arguments arguments;
   pid_t pid = -1;
   pid_t sid = -1;
@@ -118,7 +130,10 @@ int main(int argc, char *argv[]) {
     }
     
     chdir("/tmp");
-  }
+  }  
+
+  /* Configure SIGNAL handlers */
+  signal(SIGINT, handler_sigint);
     
   global_ctx = dcd_init(arguments.omapi_address, arguments.omapi_port,
 			arguments.omapi_secret_keyname,

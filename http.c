@@ -205,7 +205,8 @@ int answer_to_connection (void *cls, struct MHD_Connection *connection,
 }
 
 struct MHD_Daemon*
-http_init(int port) {
+http_init(int port)
+{
   struct MHD_Daemon *daemon = NULL;
 
   daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, port, NULL, NULL,
@@ -229,14 +230,15 @@ http_init(int port) {
   return daemon;
 
  fail:
-  if (daemon != NULL) {
-    MHD_stop_daemon(daemon);
-  }
-
-  if (route_table != NULL) {
-    g_hash_table_destroy(route_table);
-  }
-
+  http_shutdown(daemon);
   return NULL;
 }
 
+void
+http_shutdown(struct MHD_Daemon *daemon)
+{
+  if (daemon != NULL)
+    MHD_stop_daemon(daemon);
+  if (route_table != NULL)
+    g_hash_table_destroy(route_table);
+}

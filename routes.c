@@ -4,7 +4,8 @@
 #include <microhttpd.h>
 
 struct MHD_Response*
-route_lease(struct Request *request) {
+route_lease(struct Request *request)
+{
   (void)request;
 
   dhcpctl_data_string ipaddrstr;

@@ -7,8 +7,10 @@
 #include <errno.h>
 #include <string.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #include <glib.h>
+#include <jansson.h>
 #include <dhcpctl/dhcpctl.h>
 
 #define OMAPI_MAX_SECRET_LEN 200
@@ -19,13 +21,13 @@
 #define HTTP_PROCESS_BUFFER_SIZE 65536
 #define HTTP_DEFAULT_PORT 8080
 
-#define DCD_PARAM_ADDR "address"
-
 extern struct dcd_ctx *global_ctx;
 
+#define DCD_MAX_CONN 10 
+#define DCD_PARAM_ADDR "address"
+
 struct dcd_ctx {
-  pthread_mutex_t lock;
-  dhcpctl_handle ctl_handle;
+  sem_t sem_lock;
   dhcpctl_handle ctl_auth;
   struct MHD_Daemon *mhd_daemon;
   const char *omapi_address;
@@ -53,13 +55,15 @@ struct dcd_ctx* dcd_init(const char *address, int port,
 			 const unsigned char *secret,
 			 int http_port);
 
-dhcpctl_data_string dcd_get_lease(const char *address, struct dcd_ctx *ctx);
+json_t* dcd_get_lease(const char *address, struct dcd_ctx *ctx);
+void dcd_shutdown(struct dcd_ctx *ctx);
 
 /* http.c */
 static const char *bad_request_page = "<html><p><b>400 Bad Request</b></p></html>";
 
 struct Request;
 struct MHD_Daemon* http_init(int port);
+void http_shutdown(struct MHD_Daemon *daemon);
 
 struct Request {
   struct MHD_PostProcessor *post;	// POST processing of handling form data (eg. POST Request)
