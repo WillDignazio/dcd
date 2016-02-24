@@ -367,6 +367,21 @@ dcd_init(const char *address, int port,
   struct MHD_Daemon *daemon;
   struct dcd_ctx *ctx;
   dhcpctl_status status;
+  log4c_category_t *log_cat;
+
+  daemon = NULL;
+  ctx = NULL;
+  status = -1;
+  log_cat = NULL;
+
+  if (log4c_init()) {
+    fprintf(stderr, "Failed to initialize logger.... bailing now.\n");
+    goto fail;
+  }
+
+  log_cat = log4c_category_get("log4c.dcd");
+  log4c_category_set_appender(log_cat, log4c_appender_get("stdout")); 
+  log4c_category_log(log_cat, LOG4C_PRIORITY_ERROR, "HELLO WORLD");
 
   /*
    * OMAPI doesn't properly handle uninitiailized handles/ctx's.

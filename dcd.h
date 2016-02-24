@@ -12,6 +12,7 @@
 #include <glib.h>
 #include <jansson.h>
 #include <dhcpctl/dhcpctl.h>
+#include <log4c.h>
 
 #define OMAPI_MAX_SECRET_LEN 200
 #define OMAPI_DEFAULT_PORT 7911

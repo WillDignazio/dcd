@@ -1,6 +1,6 @@
 CC=clang
 CFLAGS=-ggdb -O0 -Wall -Wextra -Werror -I/usr/include/dhcpctl $(shell pkg-config --cflags glib)
-LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd -lglib -ljansson
+LDFLAGS=-ldhcpctl -lomapi -ldst -lbsd -lmicrohttpd -lglib -ljansson -llog4c
 
 SRCS =  dcd.c \
 	api.c \
